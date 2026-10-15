@@ -26,10 +26,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Instalar componentes Android SDK
-        run: |
-          echo 'y' | sdkmanager --licenses > /dev/null || true
-          sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Configurar Android SDK e componentes
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
