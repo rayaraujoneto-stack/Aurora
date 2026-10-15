@@ -109,7 +109,7 @@ public final class PlayerActivity extends Activity {
             }
             @Override public void onPlayerError(PlaybackException error) {
                 status.setText("Não foi possível reproduzir. Verifique o link, codec, conexão ou autorização. Código: "
-                    + error.errorCodeName + ". Experimente 'Forçar HLS' se o endereço ocultar a extensão .m3u8.");
+                    + error.getErrorCodeName() + ". Experimente 'Forçar HLS' se o endereço ocultar a extensão .m3u8.");
             }
         });
         loadCurrent();
