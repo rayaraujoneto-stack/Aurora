@@ -2,6 +2,7 @@
 const STORAGE_KEY='aurora-stream-items-v1';
 const EPG_KEY='aurora-stream-epg-v1';
 const PLUTO_URL='https://raw.githubusercontent.com/iprtl/m3u/live/Pluto.m3u';
+const SAIMO_CATALOG_URL='https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/catalogo.txt';
 const $=selector=>document.querySelector(selector);
 const $$=selector=>[...document.querySelectorAll(selector)];
 const state={items:[],epg:{},view:'tv',search:'',group:'all',active:null,hls:null};
@@ -37,6 +38,74 @@ async function loadPlutoPlaylist(){
     console.error('Importação Pluto:',err);
     toast('Não foi possível carregar a lista diretamente. Use Importar M3U com o arquivo baixado do GitHub.');
   }finally{buttons.forEach(b=>{b.disabled=false;b.textContent=b.dataset.original})}
+}
+// Importador opcional do catalogo Saimo. Ignora fontes com DRM, cabecalhos
+// especificos ou URL sem extensao de midia. Nao certifica direitos de transmissao.
+function parseSaimoCatalog(contents){
+  const found=[];
+  let channel=null;
+  let lastSource=null;
+  const finish=()=>{
+    if(!channel || !channel.title)return;
+    const source=channel.sources.find(entry=>{
+      if(entry.restricted || !validUrl(entry.url))return false;
+      if(!/\.(?:m3u8|mpd|mp4|mp3|aac)(?:[?#]|$)/i.test(entry.url))return false;
+      if(/\/(?:live|movie|series)\/[^/?#]+\/[^/?#]+\//i.test(entry.url))return false;
+      return true;
+    });
+    if(!source)return;
+    found.push({id:id(),title:channel.title.slice(0,140),url:source.url,type:'tv',
+      group:('Saimo · '+channel.group).slice(0,70),logo:channel.logo,
+      tvgId:'',favorite:false,source:'saimo'});
+  };
+  for(const raw of String(contents).replace(/^\uFEFF/,'').split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line || line.startsWith('#'))continue;
+    const at=line.indexOf(':');
+    if(at<1)continue;
+    const key=line.slice(0,at).trim().toLowerCase();
+    const value=line.slice(at+1).trim();
+    if(key==='canal'){
+      finish();channel={title:value,group:'TV ao vivo',logo:'',sources:[]};lastSource=null;
+    }else if(channel){
+      if(key==='categoria' && value)channel.group=value;
+      else if(key==='logo')channel.logo=validUrl(value)?value:'';
+      else if(key==='fonte'){
+        lastSource={url:value,restricted:false};channel.sources.push(lastSource);
+      }else if((key==='chave'||key==='referer'||key==='agente')&&lastSource){
+        lastSource.restricted=true;
+      }
+    }
+  }
+  finish();
+  return found.slice(0,700);
+}
+async function loadSaimoCatalog(){
+  const buttons=[$('#loadSaimo'),$('#heroSaimo')].filter(Boolean);
+  const labels=buttons.map(b=>b.textContent);
+  buttons.forEach(b=>{b.disabled=true;b.textContent='Buscando catalogo...'});
+  try{
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),30000);
+    let response;
+    try{response=await fetch(SAIMO_CATALOG_URL,{signal:controller.signal,cache:'no-store'})}
+    finally{clearTimeout(timeout)}
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const bytes=Number(response.headers.get('content-length')||0);
+    if(bytes>1024*1024)throw new Error('Catalogo maior que 1 MB');
+    const contents=await response.text();
+    if(contents.length>1024*1024)throw new Error('Catalogo maior que 1 MB');
+    const items=parseSaimoCatalog(contents);
+    if(!items.length)throw new Error('Nenhuma fonte direta compativel encontrada');
+    const backup=state.items.slice();
+    const added=uniqueImport(items);
+    if(!persist()){state.items=backup;return}
+    setView('tv');
+    toast('Catalogo Saimo: '+added+' canal(is) adicionados; '+(items.length-added)+' repetidos.');
+  }catch(err){
+    console.error('Catalogo Saimo:',err);
+    toast('Nao foi possivel importar a fonte Saimo: '+(err.message||'falha de rede'));
+  }finally{buttons.forEach((b,i)=>{b.disabled=false;b.textContent=labels[i]})}
 }
 function currentProgram(item){const programs=state.epg[item.tvgId];if(!Array.isArray(programs))return '';const now=Date.now();const found=programs.find(x=>x.start<=now&&x.stop>now);return found?.title||''}
 function XMLTVDate(s){if(!s)return NaN;const m=s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?\s*([+-])(\d{2})(\d{2})/);if(!m)return NaN;const [,y,mo,d,h,mi,se='00',sign,oh,om]=m;const utc=Date.UTC(+y,+mo-1,+d,+h,+mi,+se);const offset=(+oh*60 + +om)*60000;return utc-(sign==='+'?offset:-offset)}
@@ -84,7 +153,7 @@ function openPlayer(itemId){const item=state.items.find(x=>x.id===itemId);if(!it
   return;
 }stopPlayer();state.active=itemId;$('#playerOverlay').hidden=false;$('#playerTitle').textContent=item.title;$('#playerMeta').textContent=`${item.group||'Minha biblioteca'} · ${item.type==='tv'?'TV ao vivo':item.type==='video'?'Vídeo':'Música'}`;$('#playerFavorite').textContent=item.favorite?'♥ Favoritado':'♡ Favoritar';const isAudio=item.type==='music';const player=$(isAudio?'#audioPlayer':'#videoPlayer');$('#videoPlayer').hidden=isAudio;$('#audioPlayer').hidden=!isAudio;$('#audioArt').hidden=!isAudio;$('#playerHint').hidden=true;const isHls=/\.m3u8(?:[?#]|$)/i.test(item.url);if(isHls&&!isAudio&&window.Hls&&window.Hls.isSupported()){const hls=new window.Hls({enableWorker:true});state.hls=hls;hls.loadSource(item.url);hls.attachMedia(player);hls.on(window.Hls.Events.MANIFEST_PARSED,()=>player.play().catch(()=>{}));hls.on(window.Hls.Events.ERROR,(_event,data)=>{if(data.fatal)showPlayerHint('Não foi possível reproduzir esta transmissão. Verifique URL, CORS, formato e autorização do servidor.')});}else{player.src=item.url;player.play().catch(()=>{})}if(isHls&&!isAudio&&!window.Hls&&!player.canPlayType('application/vnd.apple.mpegurl'))showPlayerHint('HLS.js não carregou. Conecte-se à internet ou use um navegador com suporte nativo a HLS.');}
 function showPlayerHint(message){$('#playerHint').textContent=message;$('#playerHint').hidden=false}
-function bind(){ $$('#navigation [data-view], [data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));$$('[data-mobile-view]').forEach(b=>b.onclick=()=>setView(b.dataset.mobileView));$('#searchInput').addEventListener('input',e=>{state.search=e.target.value;render()});$('#groupFilter').addEventListener('change',e=>{state.group=e.target.value;render()});$('#loadPluto').onclick=$('#heroPluto').onclick=loadPlutoPlaylist;$('#openImport').onclick=$('#heroImport').onclick=()=>openForm('import');$('#openAdd').onclick=$('#heroAdd').onclick=$('#emptyAdd').onclick=()=>openForm('add');$('#openEpg').onclick=()=>openForm('epg');$('#closeForm').onclick=closeForm;$('#closePlayer').onclick=closePlayer;$('#formOverlay').addEventListener('click',e=>{if(e.target===$('#formOverlay'))closeForm()});$('#playerOverlay').addEventListener('click',e=>{if(e.target===$('#playerOverlay'))closePlayer()});document.addEventListener('keydown',e=>{if(e.key.startsWith('Arrow')&&!e.altKey&&!e.ctrlKey){if(handleRemoteArrow(e))return}if(e.key==='Escape'){closeForm();closePlayer()}if(e.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)&&$('#formOverlay').hidden){e.preventDefault();$('#searchInput').focus()}});$('#addForm').addEventListener('submit',e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));const url=String(values.url||'').trim();if(!validUrl(url)){formMessage('URL inválida: use HTTP ou HTTPS.',true);return}const item={id:id(),title:String(values.title).trim(),url,type:values.type,group:String(values.group||'').trim(),logo:validUrl(values.logo||'')?values.logo:'',tvgId:'',favorite:false};if(state.items.some(x=>x.url===url&&x.type===item.type)){formMessage('Esta URL já está cadastrada nessa categoria.',true);return}state.items.push(item);persist();setView(item.type);e.currentTarget.reset();closeForm();toast('Conteúdo adicionado com sucesso.');});$('#importForm').addEventListener('submit',async e=>{e.preventDefault();const f=$('#m3uFile').files?.[0];if(!f)return;if(f.size>8*1024*1024){formMessage('Arquivo muito grande (limite: 8 MB).',true);return}try{const parsed=parseM3U(await f.text());if(parsed.length===0){formMessage('Nenhuma entrada M3U com URL HTTP(S) foi encontrada.',true);return}const count=uniqueImport(parsed);persist();setView('tv');e.currentTarget.reset();closeForm();toast(`${count} canal(is) importado(s). ${parsed.length-count} duplicado(s) ignorado(s).`)}catch{formMessage('Falha ao ler a playlist.',true)}});$('#epgForm').addEventListener('submit',async e=>{e.preventDefault();const f=$('#epgFile').files?.[0];if(!f)return;if(f.size>15*1024*1024){formMessage('XML muito grande (limite: 15 MB).',true);return}try{let epgContent;if(/\.gz$/i.test(f.name)){if(!('DecompressionStream' in window))throw Error('Seu navegador não suporta GZIP. Use um XML descompactado.');epgContent=await new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text()}else epgContent=await f.text();const parsed=parseXMLTV(epgContent);state.epg=parsed;try{localStorage.setItem(EPG_KEY,JSON.stringify(parsed))}catch{toast('EPG grande: mantido apenas até recarregar a página.')}render();e.currentTarget.reset();closeForm();toast(`EPG carregado para ${Object.keys(parsed).length} identificadores.`)}catch(err){formMessage(err.message||'Erro ao ler XMLTV.',true)}});$('#playerFavorite').onclick=()=>toggleFavorite(state.active);$('#videoPlayer').addEventListener('error',()=>{if(state.active)showPlayerHint('O navegador não conseguiu reproduzir a mídia. Verifique o codec, o endereço e as permissões do servidor.')});$('#audioPlayer').addEventListener('error',()=>{if(state.active)showPlayerHint('Áudio indisponível ou formato não compatível com este navegador.')});$('#resetButton').onclick=()=>{if(!confirm('Apagar toda a biblioteca, favoritos e EPG salvos neste dispositivo?'))return;closePlayer();state.items=[];state.epg={};localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(EPG_KEY);state.view='tv';state.group='all';state.search='';$('#searchInput').value='';render();toast('Dados locais apagados.')};}
+function bind(){ $$('#navigation [data-view], [data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));$$('[data-mobile-view]').forEach(b=>b.onclick=()=>setView(b.dataset.mobileView));$('#searchInput').addEventListener('input',e=>{state.search=e.target.value;render()});$('#groupFilter').addEventListener('change',e=>{state.group=e.target.value;render()});$('#loadPluto').onclick=$('#heroPluto').onclick=loadPlutoPlaylist;$('#loadSaimo').onclick=$('#heroSaimo').onclick=loadSaimoCatalog;$('#openImport').onclick=$('#heroImport').onclick=()=>openForm('import');$('#openAdd').onclick=$('#heroAdd').onclick=$('#emptyAdd').onclick=()=>openForm('add');$('#openEpg').onclick=()=>openForm('epg');$('#closeForm').onclick=closeForm;$('#closePlayer').onclick=closePlayer;$('#formOverlay').addEventListener('click',e=>{if(e.target===$('#formOverlay'))closeForm()});$('#playerOverlay').addEventListener('click',e=>{if(e.target===$('#playerOverlay'))closePlayer()});document.addEventListener('keydown',e=>{if(e.key.startsWith('Arrow')&&!e.altKey&&!e.ctrlKey){if(handleRemoteArrow(e))return}if(e.key==='Escape'){closeForm();closePlayer()}if(e.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)&&$('#formOverlay').hidden){e.preventDefault();$('#searchInput').focus()}});$('#addForm').addEventListener('submit',e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));const url=String(values.url||'').trim();if(!validUrl(url)){formMessage('URL inválida: use HTTP ou HTTPS.',true);return}const item={id:id(),title:String(values.title).trim(),url,type:values.type,group:String(values.group||'').trim(),logo:validUrl(values.logo||'')?values.logo:'',tvgId:'',favorite:false};if(state.items.some(x=>x.url===url&&x.type===item.type)){formMessage('Esta URL já está cadastrada nessa categoria.',true);return}state.items.push(item);persist();setView(item.type);e.currentTarget.reset();closeForm();toast('Conteúdo adicionado com sucesso.');});$('#importForm').addEventListener('submit',async e=>{e.preventDefault();const f=$('#m3uFile').files?.[0];if(!f)return;if(f.size>8*1024*1024){formMessage('Arquivo muito grande (limite: 8 MB).',true);return}try{const parsed=parseM3U(await f.text());if(parsed.length===0){formMessage('Nenhuma entrada M3U com URL HTTP(S) foi encontrada.',true);return}const count=uniqueImport(parsed);persist();setView('tv');e.currentTarget.reset();closeForm();toast(`${count} canal(is) importado(s). ${parsed.length-count} duplicado(s) ignorado(s).`)}catch{formMessage('Falha ao ler a playlist.',true)}});$('#epgForm').addEventListener('submit',async e=>{e.preventDefault();const f=$('#epgFile').files?.[0];if(!f)return;if(f.size>15*1024*1024){formMessage('XML muito grande (limite: 15 MB).',true);return}try{let epgContent;if(/\.gz$/i.test(f.name)){if(!('DecompressionStream' in window))throw Error('Seu navegador não suporta GZIP. Use um XML descompactado.');epgContent=await new Response(f.stream().pipeThrough(new DecompressionStream('gzip'))).text()}else epgContent=await f.text();const parsed=parseXMLTV(epgContent);state.epg=parsed;try{localStorage.setItem(EPG_KEY,JSON.stringify(parsed))}catch{toast('EPG grande: mantido apenas até recarregar a página.')}render();e.currentTarget.reset();closeForm();toast(`EPG carregado para ${Object.keys(parsed).length} identificadores.`)}catch(err){formMessage(err.message||'Erro ao ler XMLTV.',true)}});$('#playerFavorite').onclick=()=>toggleFavorite(state.active);$('#videoPlayer').addEventListener('error',()=>{if(state.active)showPlayerHint('O navegador não conseguiu reproduzir a mídia. Verifique o codec, o endereço e as permissões do servidor.')});$('#audioPlayer').addEventListener('error',()=>{if(state.active)showPlayerHint('Áudio indisponível ou formato não compatível com este navegador.')});$('#resetButton').onclick=()=>{if(!confirm('Apagar toda a biblioteca, favoritos e EPG salvos neste dispositivo?'))return;closePlayer();state.items=[];state.epg={};localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(EPG_KEY);state.view='tv';state.group='all';state.search='';$('#searchInput').value='';render();toast('Dados locais apagados.')};}
 function handleRemoteArrow(e){
   if(!$('#playerOverlay').hidden||!$('#formOverlay').hidden)return false;
   const active=document.activeElement;

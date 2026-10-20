@@ -53,3 +53,10 @@ Transfira o APK para o aparelho, toque no arquivo e autorize **Instalar apps des
 - [Android Media3](https://developer.android.com/jetpack/androidx/releases/media3)
 - [WebViewAssetLoader](https://developer.android.com/develop/ui/views/layout/webapps/load-local-content)
 - [Build APK](https://developer.android.com/build/building-cmdline)
+
+
+## Aurora Stream 2.1 Beta — catalogo opcional Saimo
+O botao "Importar catalogo Saimo" consulta o catalogo publico de gabrielsaimo/SaimoPlayer.
+Somente fontes diretas sem chaves DRM nem cabecalhos especificos sao consideradas;
+nao ha verificacao automatica de direitos de retransmissao e nem contorno de DRM.
+A versao Beta usa applicationId distinto, podendo coexistir com a versao 2.0 sem afetar seus dados.

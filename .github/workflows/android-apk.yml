@@ -34,11 +34,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Verificar sintaxe JavaScript
+        run: node --check app/src/main/assets/app.js
       - name: Compilar APK de teste
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: AuroraStream-2.0-APK-debug
+          name: AuroraStream-2.1-Beta-Saimo-APK
           path: Aurora_Stream_Android_2.0_Fonte/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
