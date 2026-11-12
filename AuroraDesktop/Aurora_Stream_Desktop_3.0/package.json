@@ -1,0 +1,65 @@
+{
+  "name": "aurora-stream-desktop",
+  "version": "3.0.0",
+  "description": "Aurora Stream Desktop - TV, vídeo e música em uma biblioteca pessoal",
+  "author": "Aurora Stream",
+  "license": "MIT",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "dist:win:installer": "electron-builder --win nsis --x64",
+    "dist:win:portable": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.aurorastream.desktop",
+    "productName": "Aurora Stream Desktop",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "manifest.webmanifest",
+      "desktop/**/*",
+      "assets/**/*",
+      "LICENSE",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Aurora-Stream-Desktop-${version}-${arch}.${ext}",
+      "icon": "aurora.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Aurora Stream Desktop"
+    },
+    "portable": {
+      "artifactName": "Aurora-Stream-Desktop-${version}-Portable.${ext}"
+    }
+  }
+}
